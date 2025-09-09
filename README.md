@@ -15,20 +15,38 @@ A browser extension that allows you to circle anything on a webpage to get insta
 
 ### From Source (Development)
 
-1. Clone this repository:
+1. **Clone this repository:**
    ```bash
    git clone <repository-url>
    cd circle-to-search-extension
    ```
 
-2. Open your browser's extension management page:
-   - **Chrome**: Navigate to `chrome://extensions/`
-   - **Edge**: Navigate to `edge://extensions/`
-   - **Firefox**: Navigate to `about:addons`
+2. **Set up environment variables:**
+   
+   Create a `.env` file in the root directory:
+   ```env
+   # Google Gemini API Key
+   GEMINI_API_KEY=your_actual_gemini_api_key_here
+   
+   # Extension Configuration
+   EXTENSION_VERSION=1.0.0
+   DEBUG_MODE=false
+   ```
 
-3. Enable "Developer mode" (Chrome/Edge) or "Debug mode" (Firefox)
+3. **Update config.js with your API key:**
+   
+   Update `config.js` with your API key from the `.env` file:
+   ```javascript
+   const CONFIG = {
+     GEMINI_API_KEY: 'your_actual_gemini_api_key_here',
+     // ... other config
+   };
+   ```
 
-4. Click "Load unpacked" and select the extension directory
+4. **Load in Chrome:**
+   - Navigate to `chrome://extensions/`
+   - Enable "Developer mode"
+   - Click "Load unpacked" and select the extension directory
 
 ### From Store (Coming Soon)
 The extension will be available on browser extension stores once published.
@@ -92,9 +110,10 @@ Currently includes a placeholder search system that can be extended with:
 
 ### Privacy & Security
 - Content processing happens locally when possible
-- No data stored without user consent
-- Optional external API integration
-- Transparent data usage policies
+- No data stored without user consent  
+- API keys are kept secure and not committed to git
+- `.env` and `config.js` files are ignored by version control
+- Secure communication with Google Gemini AI API
 
 ## Development
 

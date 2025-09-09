@@ -71,7 +71,8 @@ async function toggleSnipMode(tabId) {
 }
 
 async function sendToGeminiAPI(imageData) {
-  const API_KEY = 'AIzaSyCV1iEfFxnxPX9D6sbigJZ3bpM2OnwvF2w';
+  // Import config - in a real extension, you'd load this differently
+  const API_KEY = 'AIzaSyCV1iEfFxnxPX9D6sbigJZ3bpM2OnwvF2w'; // TODO: Move to secure config
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${API_KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

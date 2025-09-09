@@ -56,6 +56,7 @@ temp/
 # API keys and secrets (if any)
 config/secrets.json
 src/config/api-keys.js
+config.js
 
 # Extension store assets (before optimization)
 assets/raw/
