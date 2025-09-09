@@ -1,391 +1,153 @@
-// Content script for Circle to Search functionality
+// Content script - minimal, rectangle-only snip relay
 (function() {
   'use strict';
 
-  let isDrawing = false;
-  let startX, startY;
-  let circleOverlay = null;
-  let selectedElements = [];
-  
-  // Initialize the extension
   function init() {
-    console.log('Circle to Search content script loaded');
+    console.log('Snip content script loaded');
     setupEventListeners();
-    createCircleOverlay();
   }
 
-  // Create overlay element for drawing circles
-  function createCircleOverlay() {
-    if (circleOverlay) return;
-    
-    circleOverlay = document.createElement('div');
-    circleOverlay.className = 'circle-search-overlay';
-    circleOverlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      pointer-events: none;
-      z-index: 999999;
-      display: none;
-    `;
-    document.body.appendChild(circleOverlay);
-  }
-
-  // Setup event listeners for mouse interactions
   function setupEventListeners() {
-    document.addEventListener('mousedown', handleMouseDown);
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    document.addEventListener('keydown', handleKeyDown);
-    
-    // Listen for messages from background script
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (message.type === 'TOGGLE_CIRCLE_MODE') {
-        toggleCircleMode();
-        sendResponse({ success: true });
+    // Listen for snip selection events from injected handlers
+    window.addEventListener('SNIP_SELECTION', handleSnipSelection);
+  }
+
+  // Handle snip selection and process the capture
+  async function handleSnipSelection(event) {
+    const { left, top, width, height } = event.detail;
+    console.log('Snip selection received:', { left, top, width, height });
+
+    try {
+      showLoadingIndicator();
+
+      if (!chrome.runtime?.id) {
+        throw new Error('Extension context lost. Please refresh and try again.');
       }
-    });
-  }
 
-  // Toggle circle selection mode
-  function toggleCircleMode() {
-    window.circleSearchActive = !window.circleSearchActive;
-    
-    if (window.circleSearchActive) {
-      document.body.style.cursor = 'crosshair';
-      circleOverlay.style.display = 'block';
-      showInstructions();
-    } else {
-      document.body.style.cursor = 'default';
-      circleOverlay.style.display = 'none';
-      clearSelection();
-      hideInstructions();
+      const captureResponse = await sendMessageWithRetry({ type: 'CAPTURE_VISIBLE_TAB' }, 3);
+      if (!captureResponse?.success) throw new Error(captureResponse?.error || 'Capture failed');
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+
+      const img = new Image();
+      img.onload = async () => {
+        try {
+          ctx.drawImage(img, left, top, width, height, 0, 0, width, height);
+          const croppedBase64 = canvas.toDataURL('image/png').split(',')[1];
+
+          const analyzeResponse = await sendMessageWithRetry({ type: 'ANALYZE_IMAGE', imageBase64: croppedBase64 }, 2);
+          if (!analyzeResponse?.success) throw new Error(analyzeResponse?.error || 'Analysis failed');
+        } catch (e) {
+          console.error('Image analysis failed:', e);
+          await extractTextFromArea(left, top, width, height);
+        } finally {
+          hideLoadingIndicator();
+          cleanupSelection();
+        }
+      };
+      img.onerror = () => { throw new Error('Failed to load captured image'); };
+      img.src = captureResponse.dataUrl;
+
+    } catch (error) {
+      console.error('Snip processing failed:', error);
+      try {
+        await extractTextFromArea(left, top, width, height);
+      } catch (_) {
+        showErrorMessage(getErrorMessage(error));
+      }
+      hideLoadingIndicator();
+      cleanupSelection();
     }
   }
 
-  // Handle mouse down event
-  function handleMouseDown(e) {
-    if (!window.circleSearchActive) return;
-    
-    e.preventDefault();
-    isDrawing = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    
-    clearPreviousCircle();
-  }
-
-  // Handle mouse move event
-  function handleMouseMove(e) {
-    if (!window.circleSearchActive || !isDrawing) return;
-    
-    e.preventDefault();
-    drawCircle(startX, startY, e.clientX, e.clientY);
-  }
-
-  // Handle mouse up event
-  function handleMouseUp(e) {
-    if (!window.circleSearchActive || !isDrawing) return;
-    
-    e.preventDefault();
-    isDrawing = false;
-    
-    // Calculate circle bounds and find elements within
-    const radius = Math.sqrt(Math.pow(e.clientX - startX, 2) + Math.pow(e.clientY - startY, 2));
-    if (radius > 10) { // Minimum circle size
-      selectElementsInCircle(startX, startY, radius);
+  // Helper: send messages with retry
+  async function sendMessageWithRetry(message, maxRetries = 2) {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        if (!chrome.runtime?.id) throw new Error('Extension context invalidated');
+        const response = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage(message, (resp) => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve(resp);
+          });
+        });
+        return response;
+      } catch (err) {
+        if (i === maxRetries - 1) throw err;
+        await new Promise(r => setTimeout(r, 500));
+      }
     }
   }
 
-  // Handle keyboard shortcuts
-  function handleKeyDown(e) {
-    if (e.key === 'Escape' && window.circleSearchActive) {
-      toggleCircleMode();
-    }
+  function getErrorMessage(error) {
+    if (String(error?.message || '').includes('Extension context')) return 'Extension reloaded. Refresh page and try again.';
+    if (String(error?.message || '').includes('captureVisibleTab')) return 'Screenshot capture failed. Trying text analysis...';
+    return `Analysis failed: ${error?.message || 'Unknown error'}`;
   }
 
-  // Draw circle on overlay
-  function drawCircle(centerX, centerY, currentX, currentY) {
-    const radius = Math.sqrt(Math.pow(currentX - centerX, 2) + Math.pow(currentY - centerY, 2));
-    
-    clearPreviousCircle();
-    
-    const circle = document.createElement('div');
-    circle.className = 'search-circle';
-    circle.style.cssText = `
-      position: absolute;
-      left: ${centerX - radius}px;
-      top: ${centerY - radius}px;
-      width: ${radius * 2}px;
-      height: ${radius * 2}px;
-      border: 3px solid #4285f4;
-      border-radius: 50%;
-      background: rgba(66, 133, 244, 0.1);
-      pointer-events: none;
-    `;
-    
-    circleOverlay.appendChild(circle);
-  }
-
-  // Clear previous circle
-  function clearPreviousCircle() {
-    const existingCircles = circleOverlay.querySelectorAll('.search-circle');
-    existingCircles.forEach(circle => circle.remove());
-  }
-
-  // Select elements within the drawn circle
-  function selectElementsInCircle(centerX, centerY, radius) {
-    selectedElements = [];
-    const allElements = document.querySelectorAll('*:not(.circle-search-overlay):not(.search-circle):not(.circle-instructions)');
-    
-    allElements.forEach(element => {
-      const rect = element.getBoundingClientRect();
-      const elementCenterX = rect.left + rect.width / 2;
-      const elementCenterY = rect.top + rect.height / 2;
-      
-      // Check if element center is within the circle
-      const distance = Math.sqrt(Math.pow(elementCenterX - centerX, 2) + Math.pow(elementCenterY - centerY, 2));
-      
-      if (distance <= radius && rect.width > 0 && rect.height > 0) {
-        selectedElements.push({
-          element: element,
-          text: element.textContent?.trim() || '',
-          tagName: element.tagName,
-          attributes: getElementAttributes(element),
-          rect: {
-            x: rect.x,
-            y: rect.y,
-            width: rect.width,
-            height: rect.height
+  // Text extraction fallback
+  async function extractTextFromArea(left, top, width, height) {
+    let textContent = '';
+    let count = 0;
+    document.querySelectorAll('*').forEach(el => {
+      const cls = el.className;
+      if (typeof cls === 'string' && (cls.includes('temp-search') || cls.includes('snip-'))) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.left < left + width && rect.right > left && rect.top < top + height && rect.bottom > top) {
+        el.childNodes.forEach(node => {
+          if (node.nodeType === Node.TEXT_NODE) {
+            const t = node.textContent.trim();
+            if (t.length > 2) { textContent += t + ' '; count++; }
           }
         });
       }
     });
-
-    if (selectedElements.length > 0) {
-      processSelectedElements();
-    }
+    if (textContent.trim()) showTextResults(textContent.trim().replace(/\s+/g, ' '), count);
+    else throw new Error('No readable text found in selection');
   }
 
-  // Get relevant attributes from element
-  function getElementAttributes(element) {
-    const relevantAttrs = ['src', 'alt', 'title', 'data-*', 'aria-label'];
-    const attrs = {};
-    
-    relevantAttrs.forEach(attr => {
-      if (attr.endsWith('*')) {
-        // Handle data-* attributes
-        Array.from(element.attributes).forEach(attribute => {
-          if (attribute.name.startsWith(attr.slice(0, -1))) {
-            attrs[attribute.name] = attribute.value;
-          }
-        });
-      } else if (element.hasAttribute(attr)) {
-        attrs[attr] = element.getAttribute(attr);
-      }
-    });
-    
-    return attrs;
+  // Result UI
+  function showTextResults(text, elementCount) {
+    const existing = document.querySelector('.snip-result-popup');
+    if (existing) existing.remove();
+    const popup = document.createElement('div');
+    popup.className = 'snip-result-popup';
+    popup.style.cssText = 'position:fixed;top:50%;right:20px;transform:translateY(-50%);width:350px;max-height:500px;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.2);padding:20px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;font-size:14px;z-index:1000000;overflow-y:auto;';
+    popup.innerHTML = `<h3>📝 Text Extraction Results</h3><div style="background:#f8f9fa;padding:15px;border-radius:8px;margin:10px 0;line-height:1.6;max-height:300px;overflow:auto;">${text.replace(/\n/g,'<br>')}</div><p style="font-size:12px;color:#666;margin-top:15px;border-top:1px solid #eee;padding-top:10px;">📊 Extracted from ${elementCount} text elements</p><button onclick="this.parentElement.remove()" style="position:absolute;top:10px;right:15px;border:none;background:none;font-size:20px;cursor:pointer;color:#999;">&times;</button>`;
+    document.body.appendChild(popup);
+    setTimeout(() => { if (popup.parentElement) popup.remove(); }, 30000);
   }
 
-  // Process selected elements and send search request
-  function processSelectedElements() {
-    // Extract text content and context
-    const textContent = selectedElements
-      .map(item => item.text)
-      .filter(text => text.length > 0)
-      .join(' ');
-    
-    // Extract images
-    const images = selectedElements
-      .filter(item => item.tagName === 'IMG')
-      .map(item => ({
-        src: item.attributes.src,
-        alt: item.attributes.alt || '',
-        title: item.attributes.title || ''
-      }));
-
-    const searchData = {
-      text: textContent,
-      images: images,
-      elements: selectedElements.length,
-      timestamp: Date.now()
-    };
-
-    // Send search request to background script
-    chrome.runtime.sendMessage({
-      type: 'SEARCH_REQUEST',
-      data: searchData
-    }, (response) => {
-      if (response && response.success) {
-        displaySearchResults(response.data);
-      } else {
-        console.error('Search failed:', response?.error);
-        showError('Search failed. Please try again.');
-      }
-    });
-
-    // Visual feedback
-    highlightSelectedElements();
+  function showLoadingIndicator() {
+    hideLoadingIndicator();
+    const el = document.createElement('div');
+    el.className = 'snip-loading';
+    el.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.8);color:#fff;padding:20px;border-radius:8px;font-family:Arial,sans-serif;z-index:1000001;';
+    el.textContent = '🤖 AI is analyzing your selection...';
+    document.body.appendChild(el);
+  }
+  
+  function hideLoadingIndicator() { 
+    const el = document.querySelector('.snip-loading'); 
+    if (el) el.remove(); 
+  }
+  
+  function cleanupSelection() { 
+    const r = document.querySelector('.temp-search-rectangle'); 
+    if (r) r.remove(); 
+  }
+  
+  function showErrorMessage(msg) { 
+    const e = document.createElement('div'); 
+    e.style.cssText='position:fixed;top:20px;right:20px;background:#ff4444;color:#fff;padding:15px;border-radius:8px;font-family:Arial,sans-serif;z-index:1000001;'; 
+    e.textContent=msg; 
+    document.body.appendChild(e); 
+    setTimeout(()=>e.remove(),5000); 
   }
 
-  // Highlight selected elements
-  function highlightSelectedElements() {
-    selectedElements.forEach(item => {
-      item.element.style.outline = '2px solid #4285f4';
-      item.element.style.outlineOffset = '2px';
-    });
-
-    // Remove highlight after 2 seconds
-    setTimeout(() => {
-      selectedElements.forEach(item => {
-        item.element.style.outline = '';
-        item.element.style.outlineOffset = '';
-      });
-    }, 2000);
-  }
-
-  // Display search results
-  function displaySearchResults(results) {
-    // Create results popup
-    const resultsPopup = document.createElement('div');
-    resultsPopup.className = 'circle-search-results';
-    resultsPopup.style.cssText = `
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: white;
-      border-radius: 8px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-      padding: 20px;
-      max-width: 400px;
-      max-height: 500px;
-      overflow-y: auto;
-      z-index: 1000000;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    `;
-
-    const closeButton = document.createElement('button');
-    closeButton.textContent = '×';
-    closeButton.style.cssText = `
-      position: absolute;
-      top: 10px;
-      right: 15px;
-      border: none;
-      background: none;
-      font-size: 24px;
-      cursor: pointer;
-      color: #666;
-    `;
-    closeButton.onclick = () => resultsPopup.remove();
-
-    const title = document.createElement('h3');
-    title.textContent = 'Search Results';
-    title.style.cssText = 'margin: 0 0 15px 0; color: #333;';
-
-    resultsPopup.appendChild(closeButton);
-    resultsPopup.appendChild(title);
-
-    if (results.results && results.results.length > 0) {
-      results.results.forEach(result => {
-        const resultItem = document.createElement('div');
-        resultItem.style.cssText = 'margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #eee;';
-        
-        resultItem.innerHTML = `
-          <h4 style="margin: 0 0 5px 0; color: #1a0dab;">${result.title}</h4>
-          <p style="margin: 0 0 5px 0; color: #545454; font-size: 14px;">${result.description}</p>
-          ${result.url ? `<a href="${result.url}" target="_blank" style="color: #1a0dab; text-decoration: none; font-size: 14px;">${result.url}</a>` : ''}
-        `;
-        
-        resultsPopup.appendChild(resultItem);
-      });
-    } else {
-      const noResults = document.createElement('p');
-      noResults.textContent = 'No results found for the selected content.';
-      noResults.style.cssText = 'color: #666; font-style: italic;';
-      resultsPopup.appendChild(noResults);
-    }
-
-    document.body.appendChild(resultsPopup);
-
-    // Auto-close after 10 seconds
-    setTimeout(() => {
-      if (resultsPopup.parentNode) {
-        resultsPopup.remove();
-      }
-    }, 10000);
-  }
-
-  // Show instructions
-  function showInstructions() {
-    const instructions = document.createElement('div');
-    instructions.className = 'circle-instructions';
-    instructions.style.cssText = `
-      position: fixed;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0,0,0,0.8);
-      color: white;
-      padding: 10px 20px;
-      border-radius: 4px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 14px;
-      z-index: 1000001;
-    `;
-    instructions.textContent = 'Circle anything on the page to search • Press ESC to exit';
-    document.body.appendChild(instructions);
-  }
-
-  // Hide instructions
-  function hideInstructions() {
-    const instructions = document.querySelector('.circle-instructions');
-    if (instructions) {
-      instructions.remove();
-    }
-  }
-
-  // Show error message
-  function showError(message) {
-    const errorDiv = document.createElement('div');
-    errorDiv.style.cssText = `
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      background: #f44336;
-      color: white;
-      padding: 10px 15px;
-      border-radius: 4px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 14px;
-      z-index: 1000001;
-    `;
-    errorDiv.textContent = message;
-    document.body.appendChild(errorDiv);
-
-    setTimeout(() => errorDiv.remove(), 3000);
-  }
-
-  // Clear selection
-  function clearSelection() {
-    selectedElements = [];
-    clearPreviousCircle();
-    
-    // Remove any existing results
-    const existingResults = document.querySelector('.circle-search-results');
-    if (existingResults) {
-      existingResults.remove();
-    }
-  }
-
-  // Initialize when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); 
+  else init();
 })();
