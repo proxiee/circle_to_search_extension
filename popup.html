@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Circle to Search</title>
+  <link rel="stylesheet" href="styles/popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="11" cy="11" r="8" stroke="#4285f4" stroke-width="2"/>
+          <circle cx="21" cy="21" r="2" fill="#4285f4"/>
+          <circle cx="11" cy="11" r="3" stroke="#4285f4" stroke-width="1.5" stroke-dasharray="3 3"/>
+        </svg>
+        <h1>Circle to Search</h1>
+      </div>
+    </header>
+
+    <main>
+      <div class="status" id="status">
+        <span class="status-indicator" id="statusIndicator"></span>
+        <span class="status-text" id="statusText">Ready to search</span>
+      </div>
+
+      <div class="actions">
+        <button id="toggleBtn" class="primary-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/>
+            <circle cx="21" cy="21" r="2" fill="currentColor"/>
+          </svg>
+          Start Circling
+        </button>
+        
+        <button id="helpBtn" class="secondary-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" stroke="currentColor" stroke-width="2"/>
+            <point cx="12" cy="17" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          How it works
+        </button>
+      </div>
+
+      <div class="instructions" id="instructions" style="display: none;">
+        <h3>How to use Circle to Search:</h3>
+        <ol>
+          <li>Click "Start Circling" or the extension icon</li>
+          <li>Draw a circle around anything on the webpage</li>
+          <li>Get instant search results and information</li>
+          <li>Press ESC to exit circle mode</li>
+        </ol>
+        
+        <div class="tips">
+          <h4>Tips:</h4>
+          <ul>
+            <li>Circle text, images, or any content</li>
+            <li>Works on any webpage</li>
+            <li>Larger circles capture more content</li>
+            <li>Results appear automatically</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="recent-searches" id="recentSearches" style="display: none;">
+        <h3>Recent Searches</h3>
+        <div class="search-history" id="searchHistory">
+          <!-- Recent searches will be populated here -->
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <div class="footer-links">
+        <a href="#" id="settingsLink">Settings</a>
+        <a href="#" id="feedbackLink">Feedback</a>
+      </div>
+      <div class="version">v1.0.0</div>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
